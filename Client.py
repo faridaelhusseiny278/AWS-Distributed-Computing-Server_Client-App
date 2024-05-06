@@ -12,8 +12,8 @@ filename = None
 original_image = None
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # = ip
-client.connect(('16.171.147.235', 50321))    # ec2 instance server
-#client.connect(('127.0.0.1', 50123))
+#client.connect(('16.171.147.7', 50321))    # ec2 instance server
+client.connect(('127.0.0.1', 50321))
 
 
 BUFFER_SIZE = 4096
