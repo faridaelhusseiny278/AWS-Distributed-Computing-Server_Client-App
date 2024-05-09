@@ -27,13 +27,15 @@ class WorkerThread(threading.Thread):
 
     def process_image(self, image, operation):
         if operation == 1:
-            result = edge_detection(image)
+            result = self.edge_detection(image)
         elif operation == 2:
-            result = color_manipulation(image)
+            result = self.color_manipulation(image)
+        elif operation == 3:
+            result = self.detect_corners(image)
         return result
  
 
-    def edge_detection(img,threshold1=90, threshold2=180):
+    def edge_detection(self,img,threshold1=90, threshold2=180):
             grayscale_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
             edges = cv2.Canny(grayscale_image, threshold1, threshold2)
@@ -41,10 +43,28 @@ class WorkerThread(threading.Thread):
             processed_image = Image.fromarray(edges)
             return processed_image
 
-    def color_manipulation(img):
+    def color_manipulation(self,img):
             inverted_image = cv2.bitwise_not(img)
             processed_image = Image.fromarray(inverted_image)
             return processed_image
+
+
+    def detect_corners(self,image):
+        image_array = np.array(image)
+        if len(image_array.shape) == 3 and image_array.shape[2] == 3:
+            gray = cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image_array.copy()  
+        dst = cv2.cornerHarris(gray, blockSize=2, ksize=3, k=0.04)
+        dst = cv2.dilate(dst, None)
+        ret, thresh = cv2.threshold(dst, 0.1*dst.max(), 255, cv2.THRESH_BINARY)
+        corners = np.argwhere(thresh == 255)
+        image_with_corners = image_array.copy()  
+        for corner in corners:
+            x, y = corner[0], corner[1]
+            cv2.circle(image_with_corners, (x, y), 5, (0, 0, 255), -1)
+        processed_image = Image.fromarray(image_with_corners)
+        return processed_image
 
 
 task_queue = queue.Queue()
