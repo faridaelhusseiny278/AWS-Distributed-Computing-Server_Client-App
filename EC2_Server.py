@@ -8,7 +8,7 @@ from Image_Processing import edge_detection, color_manipulation
 
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # = ip
 
-server.bind(('0.0.0.0',50321))
+server.bind(('0.0.0.0',55552))
 #server.bind(('172.31.32.142',50321))
 server.listen()
 BUFFER_SIZE = 4096

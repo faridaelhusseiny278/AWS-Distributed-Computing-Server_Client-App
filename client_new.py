@@ -13,14 +13,14 @@ filename = None
 original_image = None
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # = ip
-client.connect(('16.171.32.57', 55552))    # ec2 instance server
-# client.connect(('127.0.0.1', 50321))
+#client.connect(('16.171.34.27', 55552))    # ec2 instance server
+client.connect(('127.0.0.1', 55552))
 original_images = []
 image_operations = []
 
 BUFFER_SIZE = 4096
 
-folder_name = "D:\ASU\Distributed\Project\phase3\Processed Images"
+folder_name = "Processed Images"
 if not os.path.exists(folder_name):
     os.makedirs(folder_name)
 
@@ -28,7 +28,7 @@ if not os.path.exists(folder_name):
 def upload_image():
     global original_images, image_operations
     filenames = filedialog.askopenfilenames(initialdir="/", title="Select Images", filetypes=(("Image files", "*.jpg *.jpeg *.png"), ("All files", "*.*")))
-    
+    print(f"filename: {filenames}")
     for filename in filenames:
         with open(filename, 'rb') as file:
             image_data = file.read()
@@ -50,6 +50,7 @@ def process_image():
 
     for i, (filename, operation) in enumerate(image_operations):        
             operation = int(input(f"Enter the operation (1 for Edge Detection, 2 for Color Manipulation) for image {i}: "))
+            
             image_operations[i] = (filename, operation)
     print(f"Image Operations: {image_operations}")
 

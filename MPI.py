@@ -7,7 +7,6 @@ import socket
 import cv2
 import numpy as np
 import threading
-from Image_Processing import edge_detection, color_manipulation
 from PIL import Image
 import cv2
 
