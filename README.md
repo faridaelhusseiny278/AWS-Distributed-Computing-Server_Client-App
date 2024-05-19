@@ -64,6 +64,9 @@ The app supports the following image processing operations:
 3. **Process Images**:
     - Click the "Process Image" button for individual images or "Process All Images" for global operations.
     - The app will display the original and processed images side by side.
+    - If the process is completed you are expected to see this confirmation: -
+      
+    ![Bye_Gif](https://github.com/OmarMDiab/AWS-Distributed-Computing-Server_Client-App/blob/main/Client%20App/GIFS/Mission%20Accomplished.gif)
 
 4. **Download Images**:
     - After processing, you can download each processed image by clicking the "Download Processed Image" button.
