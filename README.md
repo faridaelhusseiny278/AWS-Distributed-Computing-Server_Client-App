@@ -4,6 +4,10 @@
 
 The Image Processing App is a Streamlit-based web application that allows users to upload images and apply various image processing operations. The app connects to a remote server to process the images and provides users with the ability to download the processed images.
 
+## Sample Videos
+- [GUI User Guide](https://drive.google.com/file/d/1xMva0H6TjYCj3Jngo-TJj_DvIYubBR6E/view "Streamlit APP GUI")
+- [Backend Explanation](https://drive.google.com/file/d/1mlQHX3cwp0UdyVv_ogGD9HJUy2IGUoE8/view?usp=sharing "Backend Explanation")
+
 ## Features
 
 - **Upload Multiple Images**: Users can upload multiple images in JPEG, JPG, and PNG formats.
