@@ -159,3 +159,7 @@ if close_connection:
     client.close()
     show_close_connection_gif()
     sys.exit(0)
+````
+
+## Thank you
+![Bye_Gif](https://github.com/OmarMDiab/AWS-Distributed-Computing-Server_Client-App/blob/main/Client%20App/GIFS/Close%20Connection.gif)
