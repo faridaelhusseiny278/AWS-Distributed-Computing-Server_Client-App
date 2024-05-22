@@ -3,13 +3,21 @@ import queue
 from mpi4py import MPI  # MPI for distributed computing
 import io   
 import os
+import time
+import sys
 import socket
+import boto3
+import subprocess
+import pickle
+import requests
 import cv2
 import numpy as np
 import threading
-from Image_Processing import edge_detection, color_manipulation
+# from Image_Processing import edge_detection, color_manipulation
 from PIL import Image
 import cv2
+from Image_Preprocessing import *
+from ec2_file import *
 
 class WorkerThread(threading.Thread):
     def __init__(self, comm, task_queue):
@@ -18,154 +26,293 @@ class WorkerThread(threading.Thread):
         self.comm = comm
 
     def run(self):
-                image, operation = self.task_queue
-                print(f"Worker {self.comm.Get_rank()} is now processing task.")
+        
+            image, operation,id = self.task_queue
+            result = self.process_image(image, operation)
+            print(f"Result is now preprocessed by worker {self.comm.Get_rank()}")
+            result = (result, id)
+            # if MPI.COMM_WORLD.Get_rank() == 1:
+            #      stop_instance(get_instance_id(MPI.Get_processor_name()))
+            # elif MPI.COMM_WORLD.Get_rank() == 2:
+            #     stop_instance(get_instance_id(MPI.Get_processor_name()))
                 
-                result = self.process_image(image, operation)
-                print(f"result is now preprocessed by worker {self.comm.Get_rank()}")
-                self.comm.send(result, dest=0)
+
+            self.comm.send(result, dest=0)
+
 
     def process_image(self, image, operation):
         if operation == 1:
-            result = self.edge_detection(image)
+            result =edge_detection(image)
         elif operation == 2:
-            result = self.color_manipulation(image)
+            result =color_manipulation(image)
         elif operation == 3:
-            result = self.detect_corners(image)
+            result =detect_corners(image)
+        elif operation == 4:
+            result =sift_feature_detection(image)
+        elif operation == 5:
+            result =denoise_image(image)
+        elif operation == 6:
+            result =erosion(image)
+        elif operation == 7:
+             result =dilation(image)
+        elif operation==8:
+             result = histogram_equalization(image)
         return result
  
 
-    def edge_detection(self,img,threshold1=90, threshold2=180):
-            grayscale_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            edges = cv2.Canny(grayscale_image, threshold1, threshold2)
-
-            processed_image = Image.fromarray(edges)
-            return processed_image
-
-    def color_manipulation(self,img):
-            inverted_image = cv2.bitwise_not(img)
-            processed_image = Image.fromarray(inverted_image)
-            return processed_image
 
 
-    def detect_corners(self,image):
-        image_array = np.array(image)
-        if len(image_array.shape) == 3 and image_array.shape[2] == 3:
-            gray = cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = image_array.copy()  
-        dst = cv2.cornerHarris(gray, blockSize=2, ksize=3, k=0.04)
-        dst = cv2.dilate(dst, None)
-        ret, thresh = cv2.threshold(dst, 0.1*dst.max(), 255, cv2.THRESH_BINARY)
-        corners = np.argwhere(thresh == 255)
-        image_with_corners = image_array.copy()  
-        for corner in corners:
-            x, y = corner[0], corner[1]
-            cv2.circle(image_with_corners, (x, y), 5, (0, 0, 255), -1)
-        processed_image = Image.fromarray(image_with_corners)
-        return processed_image
+def get_hostname(received_node_info, worker_rank):
+    for rank, hostname in received_node_info:
+        if rank == worker_rank:
+            return hostname
+    return None
+ 
 
+def remove_processed(task_queue, processed_images,size):
 
-task_queue = queue.Queue()
-def handle_client(client_socket):
-    
-    tasks = []
-    recv_data = client_socket.recv(BUFFER_SIZE)
-    file_stream = io.BytesIO()
-    file_stream.write(recv_data)
-
-    while b'###%Image_End%' not in recv_data:
-            recv_data = client_socket.recv(BUFFER_SIZE)
-            file_stream.write(recv_data)
-            if b"###%Image_Sent%" in recv_data:
-                        end_image = recv_data.split(b"###")
-                        if len(end_image[0])>0:
-                            file_stream.write(end_image[0])
-
-                        client_socket.send(b"I got the file")
-                        operation = client_socket.recv(BUFFER_SIZE)
-
-                        file_stream.seek(0)  
-                        image_data = np.frombuffer(file_stream.getvalue(), dtype=np.uint8)
-                        image = cv2.imdecode(image_data, cv2.IMREAD_COLOR)
-                        tasks.append((image, int(operation)))
-                        file_stream = io.BytesIO()
-
-       
-    tasks.append(None) 
-    for task in tasks:
-        task_queue.put(task)
-
+    for _ in range(size):
+        item = task_queue.get()
+        if item is not None:
+            if (item[2] not in [processed_item[1] for processed_item in processed_images]) :
+                print(f"Task {item[2]} was not processed")
+                task_queue.put(item)
     return task_queue
 
 
-        
-print ("My rank is ", MPI.COMM_WORLD.Get_rank(), "My hostname is ", MPI.Get_processor_name())
+def get_rank(received_node_info, hostname):
+    for rank, host in received_node_info:
+        if host == hostname:
+            return rank
+    return None
+
+
+
+def load_data(filename):
+    with open(filename, "rb") as file:
+        return pickle.load(file)
+    
+def save_data(data, filename):
+    with open(filename, "wb") as file:
+        pickle.dump(data, file)
+
 if MPI.COMM_WORLD.Get_rank() == 0:
-    processed_images = []   
-
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  
-    server.bind(('0.0.0.0',55552))
-    server.listen()
-    BUFFER_SIZE = 4096
-    print("Server is listening for connections.....")
+    received_node_info = []
+    if os.path.exists("flag_first_time.txt")== False:
+        flag_first_time = True
+        with open("flag_first_time.txt", "w") as file:
+            file.write("1")
+    else:
+        flag_first_time = False
+        
     while True:
-        client_socket, _ = server.accept()
-        print(f"Client {client_socket.getpeername()} connected.")
-        client_thread = threading.Thread(target=handle_client, args=(client_socket,))
-        client_thread.start()
-        
-     
-        #distribute each task to a worker
-        num_workers = MPI.COMM_WORLD.Get_size() 
-        
-        for i in range(1, num_workers):
-                task = task_queue.get()
-                if task is not None:
-                    MPI.COMM_WORLD.send(task, dest=i)
-                    print(f"sent work to worker {i}")
-                else:
-                    break
-            
-        print("task queue size: ", task_queue.qsize())  
-        for i in range(1,MPI.COMM_WORLD.Get_size()):
-            print(f"Master waiting for result from worker{i}")
-            image = MPI.COMM_WORLD.recv(source=i)
-            processed_images.append(image)
-        
-            image.save(f'server_file_{i}.jpeg', format='JPEG')
-            
-            image = Image.open(f'server_file_{i}.jpeg')
-            image_array = np.array(image)
+        processed_images=[]
+        task_queue = queue.Queue()
+        original_task_queue = queue.Queue()
+        if os.path.exists("first_time.pkl"):
+            tasks = load_data("first_time.pkl")
+        else:
+            continue
+    
+        for task in tasks:
+                task_queue.put(task)
+                original_task_queue.put(task)
+        # print(f"tasks are {tasks}")
+        if os.path.exists("processed_images.pkl"):
+            processed_images= load_data("processed_images.pkl")
+        # print(f"processed images are {processed_images}")
 
 
 
-        for i in range(1,MPI.COMM_WORLD.Get_size()): 
-            with open(f'server_file_{i}.jpeg', 'rb') as file:
-                file_data = file.read(BUFFER_SIZE)
-                while file_data:
-                    client_socket.send(file_data)
-                    file_data = file.read(BUFFER_SIZE)
-                client_socket.send(b"###%Image_Sent%")
-                if client_socket.recv(BUFFER_SIZE) == b"I got the file":
-                    continue
-                      
-            # os.unlink(f'server_file_{i}.jpeg')
-            print(f"Processed Image {i} Sent back")
-
-
-        client_socket.close() 
-        break  
-          
-
-else:
-                task_queue = MPI.COMM_WORLD.recv(source=0)
-                print("Worker", MPI.COMM_WORLD.Get_rank(), "received task")
-         
-                WorkerThread(MPI.COMM_WORLD, task_queue).start()
-
+        for i in range(1, MPI.COMM_WORLD.Get_size()):
+            node_info = MPI.COMM_WORLD.recv(source=i)
+            received_node_info.append(node_info)
 
 
     
-               
+        #distribute each task to a worker
+        num_workers = MPI.COMM_WORLD.Get_size()
+        actual_num_workers = 1
+        for i in range(1, num_workers):
+            if is_instance_healthy(get_instance_id(get_hostname(received_node_info,i))):
+                    actual_num_workers+=1
+
+        num_workers = actual_num_workers
+            
+            
+    
+
+        
+        worker_index = 1
+        task= task_queue.get()
+        original_task_size = task_queue.qsize()
+        assigned_workers = []
+        print(f"Master has {task_queue.qsize()} tasks to distribute to {num_workers-1} workers")
+        if task_queue.qsize()>= (num_workers-1): 
+            print("tasks are greater than or equal to workers")
+            for i in range(1, num_workers):
+                    # if i == 1:
+                    #      stop_instance(get_instance_id(get_hostname(received_node_info,i)))
+                    # elif i == 2:
+                    #     stop_instance(get_instance_id(get_hostname(received_node_info,i)))
+                        
+                
+                    if is_instance_healthy(get_instance_id(get_hostname(received_node_info,i))):
+                        print("sending task to worker", i)
+                        MPI.COMM_WORLD.send(task, dest=i)
+                        print(f"sent work to worker {get_hostname(received_node_info,i)}")
+                        task = task_queue.get()
+                        assigned_workers.append(i)
+                
+        else:
+            print("tasks are less than workers")
+            for i in range(task_queue.qsize()):
+                
+                if is_instance_healthy(get_instance_id(get_hostname(received_node_info,i+1))):
+                    MPI.COMM_WORLD.send(task, dest=i+1)
+                    print(f"sent work to worker {get_hostname(received_node_info,i+1)}")
+                    task = task_queue.get()
+                    assigned_workers.append(i+1)
+                
+
+        counter=0  
+        temp_assigned_workers = assigned_workers.copy()
+        for worker in assigned_workers:
+            if is_instance_healthy(get_instance_id(get_hostname(received_node_info,worker))):
+                timeout = 8
+                start_time = time.time()
+                while True:
+                    if MPI.COMM_WORLD.Iprobe(source=worker):
+                        print(f"Master waiting for result from worker{get_hostname(received_node_info,worker)}")
+                        image,id = MPI.COMM_WORLD.recv(source=worker)
+                        counter+=1
+                        print(f"master received image {id} from worker {get_hostname(received_node_info,worker)}")
+                        processed_images.append((image,id))
+                        if flag_first_time:
+                            save_data(processed_images, "processed_images.pkl")
+                        print(f"processed images are {processed_images}")
+                    
+                        image.save(f'server_file_{counter}.jpeg', format='JPEG')
+                        print(f"image saved as server_file_{counter}.jpeg")
+                        temp_assigned_workers.remove(worker)
+                        break
+                    # if time.time() - start_time >= timeout:
+                    #     print(f"Timeout reached. No message received from worker{get_hostname(received_node_info,worker)}")
+                    #     temp_assigned_workers.remove(worker)
+                    #     break
+            else:
+                    temp_assigned_workers.remove(worker)
+                    print("matet")
+
+
+        assigned_workers = temp_assigned_workers.copy()
+        excess_task_queue= remove_processed(original_task_queue, processed_images, original_task_queue.qsize())
+        while excess_task_queue.qsize() != 0:
+            print(f"original task queue size after removing processed images is {excess_task_queue.qsize()}")
+            worker_index = 1   
+            print("Some tasks were not processed")
+            
+            for i in range(excess_task_queue.qsize()):               
+                print(f"checking if worker {get_hostname(received_node_info,worker_index) } is healthy")
+                unhealthy_count = 0
+
+                while not is_instance_healthy(get_instance_id(get_hostname(received_node_info,worker_index))):
+                    unhealthy_count+=1
+                    if unhealthy_count > num_workers-1:
+                        print("No healthy workers..waiting for 20 seconds to start new workers")
+                        if os.path.exists("failed_in_the_middle.txt")==False:
+                            with open("failed_in_the_middle.txt", "w") as file:
+                                file.write("1")
+                        time.sleep(30)
+                        continue
+                    print(f"worker {get_hostname(received_node_info,worker_index) } is not healthy")
+                    worker_index = (worker_index + 1) % num_workers
+                    if worker_index == 0:
+                        worker_index = 1
+
+                unhealthy_count = 0
+                print("sending task to worker", get_hostname(received_node_info,worker_index))
+                task = excess_task_queue.get()
+            
+                MPI.COMM_WORLD.send(task, dest=worker_index)
+                        
+                assigned_workers.append(worker_index)
+                print(f"sent work to worker {get_hostname(received_node_info,worker_index)}")
+                # task = original_task_queue.get()
+                worker_index = (worker_index + 1) % num_workers
+                if worker_index == 0:
+                        worker_index = 1
+            
+            
+
+            print("assigned workers are", assigned_workers)
+            for worker in assigned_workers:
+                    if is_instance_healthy(get_instance_id(get_hostname(received_node_info, worker))):
+                        timeout = 8
+                        start_time = time.time()
+                        while True:
+                            if MPI.COMM_WORLD.Iprobe(source=worker):
+                                print(f"Master waiting for result from worker{get_hostname(received_node_info,worker)}")
+                                image,id = MPI.COMM_WORLD.recv(source=worker)
+                                counter+=1
+                                print(f"master received image {id} from worker {get_hostname(received_node_info,worker)}")
+                                processed_images.append((image,id))
+                                if flag_first_time:
+                                    save_data(processed_images, "processed_images.pkl")
+                                print(f"processed images are {processed_images}")
+                                image.save(f'server_file_{counter}.jpeg', format='JPEG')
+                                break
+                            # if time.time() - start_time >= timeout:
+                            #     print(f"Timeout reached. No message received from worker{get_hostname(received_node_info,worker)}")
+                            #     break
+            excess_task_queue= remove_processed(original_task_queue, processed_images, original_task_queue.qsize())
+            print(f"original task queue size after removing processed images (FOR THE SECOND TIME) is {excess_task_queue.qsize()}")
+            
+                
+        print("All tasks received and processed successfully")
+            
+
+        print(f"counter is {counter}")
+
+        break
+    print("finished successfully")
+    
+    
+
+        
+
+else:
+                print(f"my rank is {MPI.COMM_WORLD.Get_rank()} and my hostname is {MPI.Get_processor_name()}")
+
+                if MPI.COMM_WORLD.Iprobe(source=0):
+                    print("Worker", MPI.COMM_WORLD.Get_rank(), "received task newwww")
+                    task_queue = MPI.COMM_WORLD.recv(source=0)
+                    print("task received is ", task_queue)
+                    WorkerThread(MPI.COMM_WORLD, task_queue).start()
+                
+                # send rank and hostname to master
+                hostname = MPI.Get_processor_name()
+                rank = MPI.COMM_WORLD.Get_rank()
+                node_info = (rank, hostname)
+                MPI.COMM_WORLD.send(node_info, dest=0)
+                
+                    
+                while True:
+                        print("Worker", MPI.COMM_WORLD.Get_rank(), "received task")
+                        if is_instance_healthy(get_instance_id(MPI.Get_processor_name())):
+                            task_queue = MPI.COMM_WORLD.recv(source=0) 
+                            if task_queue is None:
+                                break
+                            else:
+                                WorkerThread(MPI.COMM_WORLD, task_queue).start()
+                            
+
+
+                
+            
+                
+
+
+
+
+          
